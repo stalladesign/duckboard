@@ -1,0 +1,4 @@
+# The design mockup holds real session titles and reply text from the author's machine.
+design/mockup.html
+.DS_Store
+*.log

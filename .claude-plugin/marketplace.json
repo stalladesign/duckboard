@@ -1,0 +1,5 @@
+{
+  "name": "duckboard",
+  "owner": { "name": "stalladesign" },
+  "plugins": [{ "name": "duckboard", "source": "./" }]
+}

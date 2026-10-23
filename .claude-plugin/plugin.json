@@ -1,0 +1,32 @@
+{
+  "name": "duckboard",
+  "version": "0.1.0",
+  "description": "One pane that shows every Claude Code session on this computer.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "addressName": {
+      "type": "string",
+      "title": "Address name",
+      "description": "If a reply line starts with this name and a comma or colon, the board drops it.",
+      "default": ""
+    },
+    "autoCompact": {
+      "type": "boolean",
+      "title": "Auto compact",
+      "description": "Compact an idle, warm session after the idle minutes below.",
+      "default": false
+    },
+    "autoCompactIdleMinutes": {
+      "type": "number",
+      "title": "Auto compact after idle minutes",
+      "description": "Must be under the 60 minute cache lifetime measured on this machine.",
+      "default": 50
+    },
+    "autoCompactMinTokens": {
+      "type": "number",
+      "title": "Auto compact minimum context tokens",
+      "description": "Only compact sessions whose context is at least this size.",
+      "default": 100000
+    }
+  }
+}
