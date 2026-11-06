@@ -68,7 +68,6 @@ declare module 'claude-code' {
       coldOpen: boolean
       openRows: string[]
       compact: Record<string, CompactState>
-      theme: 'light' | 'dark'
       git: Record<string, GitFact>
       pending: Pending | null
       isTurnRunning: boolean

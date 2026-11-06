@@ -224,14 +224,3 @@ export async function gitFact($: EngineInterface, cwd: string, now: number): Pro
   }
   return { fact: { text, at: now }, commit }
 }
-
-export async function readTheme($: EngineInterface): Promise<'light' | 'dark'> {
-  try {
-    const row = (await $.config.list()).find(r => r.key === 'theme')
-    // shortcut: "auto" (follow the system) reads as light; the module cannot see the system theme.
-    return typeof row?.value === 'string' && row.value.includes('dark') ? 'dark' : 'light'
-  } catch (err) {
-    log($, 'theme', err)
-    return 'light'
-  }
-}

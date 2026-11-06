@@ -2,23 +2,23 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Board, CompactState, GitFact, Pending, Row } from '../types'
-import { detailItems, drawDetails, drawFooter, drawGroup, drawRow, drawRule, drawTop, GROUP_LABEL, metaParts, PALETTE, textBar } from './draw'
+import { detailItems, drawBar, drawCounts, drawDetails, drawGroup, drawLine, drawRow, drawRule, drawSpace, footerLines, GROUP_LABEL, HOVER, limitLine, metaParts, SPEC, TOP, textBar } from './draw'
 import { fmtDur, resetsIn } from './format'
 import { canCompact, compactNote, failed, formatLine, newId, onReply, parseLine, request, showButton, tick, unwrap, type Line } from './compact'
-import { gitFact, log, readTheme, scan } from './scan'
+import { gitFact, log, scan } from './scan'
 
 const PANE = 'duckboard'
 const SCAN_MS = 20_000
 const GIT_TTL_MS = 60_000
-// shortcut: remote surfaces report the pane in code-font cells, not pixels. 7.8 px (a 13 px monospace
-// advance) was measured on the desktop app: 147 columns drew a 1,160 px pane. Upgrade if the engine reports pixels.
-const PX_PER_COLUMN = 7.8
+// Remote surfaces report the pane in code-font cells, not pixels. Measured on the desktop app (2026-11-06):
+// a full-width Box drew 623 px at 70 cells and 1,052 px at 119, so 8.75 px a cell plus 10. Two px under it,
+// so a rounding error never spills past the edge. Rules and bars stretch to the real width; this sizes the rest.
+const pxWide = (cells: number) => Math.floor(cells * 8.75 + 10) - 2
 const BUTTONS_PX = 96
 
 const boardA = atom({ plugin: 'duckboard', key: 'board' } as const, null as Board | null)
 const coldOpenA = atom({ plugin: 'duckboard', key: 'coldOpen' } as const, false)
 const openRowsA = atom({ plugin: 'duckboard', key: 'openRows' } as const, [] as string[])
-const themeA = atom({ plugin: 'duckboard', key: 'theme' } as const, 'light' as 'light' | 'dark')
 const compactA = atom({ plugin: 'duckboard', key: 'compact' } as const, {} as Record<string, CompactState>)
 const gitA = atom({ plugin: 'duckboard', key: 'git' } as const, {} as Record<string, GitFact>)
 const pendingA = atom({ plugin: 'duckboard', key: 'pending' } as const, null as Pending | null)
@@ -48,8 +48,6 @@ async function runScan($: EngineInterface, addressName: string, auto: Auto) {
   try {
     const board = await scan($, { addressName, commits })
     await update($, boardA, () => board)
-    const theme = await readTheme($)
-    if (theme !== (await read($, themeA))) await update($, themeA, () => theme)
     const open = new Set(await read($, openRowsA))
     for (const r of board.rows) if (open.has(r.sessionId) && r.group !== 'cold') await refreshGit($, r, false)
     await autoCompact($, board, auto)
@@ -272,12 +270,11 @@ export const register: Register = (on, options) => {
     const openRows = await read($, openRowsA)
     const git = await read($, gitA)
     const compact = await read($, compactA)
-    const theme = await read($, themeA)
     const now = await $.clock.now()
     if (!board) return <Text dimColor>Reading sessions.</Text>
 
     const groups = (['working', 'yourturn', 'cold'] as const).map(g => ({ g, rows: board.rows.filter(r => r.group === g) }))
-    const counts = {
+    const countsOf = {
       working: groups[0]!.rows.length,
       yourturn: groups[1]!.rows.length,
       agents: board.rows.reduce((n, r) => n + r.agentsRunning, 0),
@@ -298,45 +295,69 @@ export const register: Register = (on, options) => {
     // The terminal's table carries an Svg that draws nothing: pick by surface, not by the table.
     if (e.surface !== 'terminal' && 'Svg' in els && els.Svg) {
       const Svg = els.Svg
-      const W = Math.max(260, Math.round(e.props.bodyColumns * PX_PER_COLUMN))
+      const W = Math.max(260, pxWide(e.props.bodyColumns))
       const RW = W - BUTTONS_PX
-      const hover = { backgroundColor: PALETTE[theme].hover }
-      const top = drawTop({ limits: board.limits, counts, now, width: W, theme, readAt: board.limitsReadAt })
-      const foot = drawFooter({ headless: board.headless6h, agoMs: ago, width: W, theme })
-      const rule = drawRule(W, theme)
-      const ruleBox = (k: string) => <Box key={k}><Svg source={rule.svg} alt="" width={W} height={1} /></Box>
+      const hover = { backgroundColor: HOVER }
+      const pic = (k: string, p: { svg: string; alt: string; height: number; width?: number }) =>
+        p.width === undefined
+          ? <Svg key={k} source={p.svg} alt={p.alt} height={p.height} />
+          : <Svg key={k} source={p.svg} alt={p.alt} width={p.width} height={p.height} />
+      const space = (k: string, px: number) => <Box key={k}>{pic(`${k}-s`, { ...drawSpace(1, px), width: 1 })}</Box>
+      const ruleBox = (k: string) => <Box key={k}>{pic(`${k}-r`, drawRule(W))}</Box>
+      const barBox = (k: string, pct: number, alt: string) => <Box key={k}>{pic(`${k}-b`, drawBar(pct, 'dim', W, alt))}</Box>
+      // Left and right pictures on one line, pushed to the column's real edges: no spacer Box, which the
+      // desktop lets take the right picture's room.
+      const split = (k: string, left: ReturnType<typeof drawLine>, right: ReturnType<typeof drawLine> | null) => (
+        <Box key={k} flexDirection="row" justifyContent="space-between">
+          {pic(`${k}-l`, left)}
+          {right && pic(`${k}-r`, right)}
+        </Box>
+      )
+      const counts = drawCounts({ counts: countsOf })
+      const foot = footerLines({ headless: board.headless6h, agoMs: ago })
       return (
         <Box flexDirection="column">
-          <Box key="top"><Svg source={top.svg} alt={top.alt} width={W} /></Box>
+          <Box key="top" flexDirection="column">
+            {pic('counts', counts)}
+            {board.limits.length > 0 && space('top-gap', TOP.underCounts)}
+            {board.limits.map((l, i) => {
+              const t = limitLine(l, now, board.limitsReadAt)
+              const left = drawLine({ text: t.left, size: SPEC.fsMeta, ink: 'text', top: TOP.limitGap, bottom: TOP.labelToBar, alt: t.alt })
+              const right = t.right ? drawLine({ text: t.right, size: SPEC.fsMeta, ink: 'dim', top: TOP.limitGap, bottom: TOP.labelToBar, end: true }) : null
+              return (
+                <Box key={`lim-${i}`} flexDirection="column">
+                  {split(`lim-${i}-t`, left, right)}
+                  {barBox(`lim-${i}-b`, l.percent / 100, `${l.label}: ${l.percent}% used`)}
+                </Box>
+              )
+            })}
+            {space('top-end', TOP.bottom)}
+          </Box>
           {board.error && <Text color="red">Scan failed: {board.error}</Text>}
           {groups.map(({ g, rows }) => {
             const isCold = g === 'cold'
-            const head = drawGroup({ label: GROUP_LABEL[g], n: rows.length, width: isCold ? RW : W, theme, rule: !isCold })
+            const head = drawGroup({ label: GROUP_LABEL[g], n: rows.length })
             const show = !isCold || coldOpen
             return (
               <Box key={`g-${g}`} flexDirection="column">
-                {isCold ? (
-                  <Box key="gh-cold" flexDirection="column">
-                    {/* bottom-aligned: the label row's 20 px top padding sits above the button */}
-                    <Box flexDirection="row" alignItems="flex-end">
-                      <Svg source={head.svg} alt={head.alt} width={RW} />
-                      <Box flexGrow={1} />
-                      <Box paddingRight="sm"><Button key="cold-toggle" onPress={toggleCold}>{coldOpen ? 'Hide' : 'Show'}</Button></Box>
-                    </Box>
-                    {ruleBox('gh-cold-rule')}
+                <Box key={`gh-${g}`} flexDirection="column">
+                  {/* bottom-aligned: the label row's 20 px top padding sits above the button */}
+                  <Box flexDirection="row" alignItems="flex-end">
+                    {pic(`gh-${g}-l`, head)}
+                    <Box flexGrow={1} />
+                    {isCold && <Box paddingRight="sm"><Button key="cold-toggle" onPress={toggleCold}>{coldOpen ? 'Hide' : 'Show'}</Button></Box>}
                   </Box>
-                ) : (
-                  <Box key={`gh-${g}`}><Svg source={head.svg} alt={head.alt} width={W} /></Box>
-                )}
+                  {ruleBox(`gh-${g}-rule`)}
+                </Box>
                 {show && rows.map((row, i) => {
-                  const pic = drawRow({ row, now, width: RW, theme, note: noteFor(row) })
+                  const rp = drawRow({ row, now, width: RW, note: noteFor(row) })
                   const isOpen = openRows.includes(row.sessionId)
-                  const det = isOpen ? drawDetails({ items: detailItems(row, git[row.sessionId] ?? null, now), width: W, theme }) : null
+                  const det = isOpen ? drawDetails({ items: detailItems(row, git[row.sessionId] ?? null, now), width: W }) : null
                   return (
                     <Box key={`r-${row.sessionId}`} flexDirection="column" hover={hover}>
                       {i > 0 && ruleBox(`rl-${row.sessionId}`)}
                       <Box key={`rr-${row.sessionId}`} flexDirection="row" alignItems="flex-start">
-                        <Svg source={pic.svg} alt={pic.alt} width={RW} />
+                        <Svg source={rp.svg} alt={rp.alt} width={RW} />
                         <Box flexGrow={1} />
                         <Box flexDirection="column" alignItems="flex-end" gap="xs" paddingTop="sm" paddingRight="sm">
                           <Button key={`d-${row.sessionId}`} onPress={() => toggleRow(row)}>{isOpen ? 'Hide details' : 'Details'}</Button>
@@ -351,7 +372,10 @@ export const register: Register = (on, options) => {
             )
           })}
           {board.rows.length === 0 && <Text dimColor>No sessions found.</Text>}
-          <Box key="foot"><Svg source={foot.svg} alt={foot.alt} width={W} /></Box>
+          <Box key="foot" flexDirection="column">
+            {ruleBox('foot-rule')}
+            {split('foot-t', foot.left, foot.right)}
+          </Box>
         </Box>
       )
     }
@@ -362,7 +386,7 @@ export const register: Register = (on, options) => {
         {board.limits.map(l => (
           <Text>{`${l.label} ${l.percent}% ${textBar(l.percent / 100, 10)}${resetsIn(l.resetsAt, now) ? ' ' + resetsIn(l.resetsAt, now) : ''}${board.limitsReadAt != null ? `, read ${fmtDur(now - board.limitsReadAt)} ago` : ''}`}</Text>
         ))}
-        <Text dimColor>{`${counts.working} working, ${counts.yourturn} your turn, ${counts.agents} agent${counts.agents === 1 ? '' : 's'} running`}</Text>
+        <Text dimColor>{`${countsOf.working} working, ${countsOf.yourturn} your turn, ${countsOf.agents} agent${countsOf.agents === 1 ? '' : 's'} running`}</Text>
         {board.error && <Text color="red">Scan failed: {board.error}</Text>}
         {groups.map(({ g, rows }) => (
           <Box key={`g-${g}`} flexDirection="column" marginTop={1}>

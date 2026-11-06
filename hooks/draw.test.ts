@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Row } from '../types'
 import { CACHE_TTL_MS } from './board'
-import { detailItems, drawDetails, drawFooter, drawGroup, drawRow, drawRule, drawTop, fit, metaParts, PALETTE, textBar, textWidth, wrap, SPEC } from './draw'
+import { detailItems, drawBar, drawCounts, drawDetails, drawGroup, drawLine, drawRow, drawRule, fit, footerLines, limitLine, metaParts, PALETTE, textBar, textWidth, wrap, SPEC } from './draw'
 
 const NOW = Date.parse('2026-01-01T12:00:00Z')
 const MIN = 60_000
@@ -69,66 +69,83 @@ test('details: known facts only', () => {
 })
 
 test('row svg: escaped, fitted, colored by group, small, with alt', () => {
-  const r = drawRow({ row: row({ title: 'A <b> & "q" title that is far too long to ever fit in the row width at all', isThis: true }), now: NOW, width: 280, theme: 'light', note: null })
+  const r = drawRow({ row: row({ title: 'A <b> & "q" title that is far too long to ever fit in the row width at all', isThis: true }), now: NOW, width: 280, note: null })
   expect(r.svg.startsWith('<svg')).toBe(true)
   expect(r.svg).toContain('&lt;b&gt; &amp;')
   expect(r.svg).not.toContain('<b>')
-  expect(r.svg).toContain(PALETTE.light.yourturn)
+  expect(r.svg).toContain(`class="k-yourturn" fill="${PALETTE.light.yourturn}"`)
+  // the dark colors ride along in the SVG's own media query
+  expect(r.svg).toContain(`@media (prefers-color-scheme: dark){`)
+  expect(r.svg).toContain(`.k-text{fill:${PALETTE.dark.text}}`)
   expect(r.svg).toContain('this one')
   expect(r.svg).toContain('font-size="13"')
   expect(r.svg.length).toBeLessThan(131072)
   expect(r.alt).toContain('Your turn')
   expect(r.alt).toContain('Cache 41m')
   expect(r.height).toBeGreaterThan(40)
-  const dark = drawRow({ row: row({ group: 'cold' }), now: NOW, width: 280, theme: 'dark', note: { text: 'Request sent. Waiting for the session to start it.', tone: 'dim' } })
-  expect(dark.svg).toContain(PALETTE.dark.cold)
-  expect(dark.svg).toContain('Request sent.')
-  expect(dark.height).toBeGreaterThan(r.height)
+  const cold = drawRow({ row: row({ group: 'cold' }), now: NOW, width: 280, note: { text: 'Request sent. Waiting for the session to start it.', tone: 'dim' } })
+  expect(cold.svg).toContain(`.k-cold{fill:${PALETTE.dark.cold}}`)
+  expect(cold.svg).toContain('Request sent.')
+  expect(cold.height).toBeGreaterThan(r.height)
 })
 
-test('top: counts first in 13px, numbers semibold, then the limit bars; no rule under it', () => {
-  const top = drawTop({ limits: [{ label: '5-hour limit', percent: 6, resetsAt: '2026-01-01T16:10:00Z' }, { label: 'Weekly', percent: 18, resetsAt: null }], counts: { working: 1, yourturn: 0, agents: 0 }, now: NOW, width: 428, theme: 'light' })
-  const svg = top.svg
-  expect(svg.indexOf('>working<')).toBeLessThan(svg.indexOf('5-hour limit 6%'))
-  expect(svg).toContain('font-size="13" font-weight="600" fill="#1f1f1f">1</text>')
-  expect(svg).toContain('font-size="13" fill="#1f1f1f">working</text>')
-  expect(svg).toContain('font-size="13" fill="#e6e6e6">|</text>')
-  expect(svg).toContain('resets in 4h 10m')
-  expect(svg).not.toContain('height="1" fill')
-  // 10 top, 16 count line, 12 under it, two limits of 8 + 14.85 + 3 + 4, 24 bottom: the Figma frame's 121.7
-  expect(Math.abs(top.height - 121.7)).toBeLessThan(0.5)
-  expect(top.alt).toBe('1 working, 0 your turn, 0 agents running. 5-hour limit 6%, resets in 4h 10m. Weekly 18%.')
-  const none = drawTop({ limits: [], counts: { working: 0, yourturn: 0, agents: 0 }, now: NOW, width: 360, theme: 'light' })
-  expect(none.svg).not.toContain('limit')
-  // no bars: no room left for them
-  expect(Math.abs(none.height - (10 + 16 + 24))).toBeLessThan(0.1)
-  const old = drawTop({ limits: [{ label: '5-hour limit', percent: 32, resetsAt: '2026-01-01T14:59:00Z' }], counts: { working: 0, yourturn: 0, agents: 0 }, now: NOW, width: 428, theme: 'light', readAt: NOW - 12 * 60_000 })
-  expect(old.svg).toContain('resets in 2h 59m, read 12m ago')
-  expect(old.alt).toContain('5-hour limit 32%, resets in 2h 59m, read 12m ago.')
+test('top: counts in 13px, numbers semibold, sized to themselves; limit lines say when they reset', () => {
+  const c = drawCounts({ counts: { working: 1, yourturn: 0, agents: 0 } })
+  expect(c.svg).toContain('font-size="13" font-weight="600" class="k-text" fill="#1f1f1f">1</text>')
+  expect(c.svg).toContain('font-size="13" class="k-text" fill="#1f1f1f">working</text>')
+  expect(c.svg).toContain('font-size="13" class="k-rule" fill="#e6e6e6">|</text>')
+  expect(c.alt).toBe('1 working, 0 your turn, 0 agents running.')
+  expect(c.height).toBe(26)
+  expect(c.width).toBeLessThan(400)
+  expect(limitLine({ label: '5-hour limit', percent: 6, resetsAt: '2026-01-01T16:10:00Z' }, NOW)).toEqual({ left: '5-hour limit 6%', right: 'resets in 4h 10m', alt: '5-hour limit 6%, resets in 4h 10m.' })
+  expect(limitLine({ label: 'Weekly', percent: 18, resetsAt: null }, NOW)).toEqual({ left: 'Weekly 18%', right: null, alt: 'Weekly 18%.' })
+  expect(limitLine({ label: '5-hour limit', percent: 32, resetsAt: '2026-01-01T14:59:00Z' }, NOW, NOW - 12 * 60_000).right).toBe('resets in 2h 59m, read 12m ago')
 })
 
-test('section label (Figma 1:1194): 20 top, 4 bottom, a rule below it when asked', () => {
-  const g = drawGroup({ label: 'Working', n: 1, width: 428, theme: 'light', rule: true })
+test('a line picture: as wide as its text, right-aligned against its own edge when asked', () => {
+  const l = drawLine({ text: 'Weekly 18%', size: 11, ink: 'text', top: 8, bottom: 3 })
+  expect(l.svg).toContain('x="12"')
+  expect(Math.abs(l.height - (8 + 14.85 + 3))).toBeLessThan(0.1)
+  const r = drawLine({ text: 'resets in 4h', size: 11, ink: 'dim', top: 8, end: true })
+  expect(r.svg).toContain(`x="${r.width - 12}"`)
+  expect(r.svg).toContain('text-anchor="end"')
+})
+
+test('rules span the width; bars are inset by the gutter', () => {
+  const rule = drawRule(428)
+  expect(rule.height).toBe(1)
+  // an empty alt is not drawn on the desktop
+  expect(rule.alt).not.toBe('')
+  expect(rule.svg).toContain('width="428" height="1" class="k-rule"')
+  // stretched to the column's real width on the desktop
+  expect(rule.svg).toContain('preserveAspectRatio="none"')
+  expect(drawBar(0.5, 'dim', 428, 'x').svg).toContain('preserveAspectRatio="none"')
+  const bar = drawBar(0.25, 'dim', 428, 'Weekly 25% used')
+  expect(bar.svg).toContain('<rect x="12" y="0" width="404" height="4" rx="2" class="k-track"')
+  expect(bar.svg).toContain('width="101" height="4" rx="2" class="k-dim"')
+  expect(drawBar(0, 'dim', 428, 'x').svg).not.toContain('k-dim"')
+})
+
+test('section label (Figma 1:1194): 20 top, 4 bottom, sized to its text', () => {
+  const g = drawGroup({ label: 'Working', n: 1 })
   expect(g.alt).toBe('Working, 1 session')
-  expect(Math.abs(g.height - 39.85)).toBeLessThan(0.1)
+  expect(Math.abs(g.height - 38.85)).toBeLessThan(0.1)
   // the label text starts 20 below the top of its row
   expect(g.svg).toContain('y="30.7"')
-  expect(g.svg).toContain('width="428" height="1" fill="#e6e6e6"')
-  const cold = drawGroup({ label: 'Cold', n: 7, width: 300, theme: 'light', rule: false })
-  expect(cold.svg).not.toContain('height="1" fill')
-  expect(Math.abs(cold.height - 38.85)).toBeLessThan(0.1)
-  expect(drawRule(428, 'dark').svg).toContain('fill="#333333"')
-  expect(drawRule(428, 'dark').height).toBe(1)
+  expect(g.svg).not.toContain('height="1" class="k-rule"')
+  expect(drawGroup({ label: 'Cold', n: 7 }).alt).toBe('Cold, 7 sessions')
 })
 
 test('rows carry no rule of their own; details and footer pictures', () => {
-  expect(drawRow({ row: row(), now: NOW, width: 300, theme: 'light', note: null }).svg).not.toContain('height="1" fill')
-  const det = drawDetails({ items: detailItems(row(), null, NOW), width: 280, theme: 'light' })
+  expect(drawRow({ row: row(), now: NOW, width: 300, note: null }).svg).not.toContain('height="1" class="k-rule"')
+  const det = drawDetails({ items: detailItems(row(), null, NOW), width: 280 })
   expect(det.svg).toContain('Last update')
   expect(det.svg).toContain('41 min left')
-  const foot = drawFooter({ headless: 0, agoMs: 4000, width: 360, theme: 'light' })
-  expect(foot.svg).toContain('0 background runs in the last 6 hours')
-  expect(foot.svg).toContain('Updated 4s ago')
+  const foot = footerLines({ headless: 0, agoMs: 4000 })
+  expect(foot.left.svg).toContain('0 background runs in the last 6 hours')
+  expect(foot.right.svg).toContain('Updated 4s ago')
+  expect(foot.right.alt).toBe('Updated 4s ago')
+  expect(foot.left.alt).toBe('0 background runs in the last 6 hours. Updated 4s ago.')
 })
 
 test('terminal bars are plain ASCII', () => {

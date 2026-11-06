@@ -69,7 +69,6 @@ export function engine(on: On, seen: { reads: string[]; argv: string[][] }, with
   })
   on('session.usage', () => ({ value: { startedAt: NOW - 60 * MIN, context: { tokens: 127_000, window: 1_000_000, percent: 13 }, rateLimits: rateLimits ?? [{ kind: 'five_hour', percentUsed: 6, resetsAt: new Date(NOW + 250 * MIN).toISOString() }] } }))
   on('session.id', () => ({ value: 'bbbbbbbb-0000-4000-8000-000000000002' }))
-  on('config.list', () => ({ value: [{ key: 'theme', label: 'Theme', kind: 'enum', value: 'dark', provider: { kind: 'engine' } }] as never }))
   on('command.register', () => ({ value: { command: 'duckboard' } }))
   on('ui.log', () => ({ value: undefined }))
   if (withOpen) on('ui.open', () => ({ value: { isPlaced: true } }))
